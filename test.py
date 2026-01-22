@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QSlider, QPushButton, QLabel, QDialog, QComboBox, QLineEdit,
     QFrame, QGraphicsDropShadowEffect, QScrollArea
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QMimeData, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QMimeData, QSize, QTimer
 from PyQt6.QtGui import QDrag, QIcon, QColor
 from pynput import keyboard
 
@@ -628,7 +628,12 @@ class SonarProRedesign(QMainWindow):
             elif action == "mute":
                 self.do_mute(sink)
         while True:
-            hotkeys = {key: (lambda s=sn, a=act: on_press(s, a)) for sn, acts in self.hotkeys_config.items() for act, key in acts.items() if key}
+            hotkeys = {
+                key: (lambda s=sn, a=act: on_press(s, a)) 
+                for sn, acts in self.hotkeys_config.items() 
+                if sn in self.sinks
+                for act, key in acts.items() if key
+            }
             if hotkeys:
                 try:
                     with keyboard.GlobalHotKeys(hotkeys) as h:
