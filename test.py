@@ -44,6 +44,7 @@ class HotkeyEdit(QLineEdit):
         key = event.key()
         if key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
             self.clear()
+            self.hotkeyChanged.emit("")
             return
         if key == Qt.Key.Key_Escape:
             self.clearFocus()
@@ -52,51 +53,47 @@ class HotkeyEdit(QLineEdit):
         modifiers = event.modifiers()
         parts = []
         if modifiers & Qt.KeyboardModifier.ControlModifier:
-            parts.append("Ctrl")
+            parts.append("<ctrl>")
         if modifiers & Qt.KeyboardModifier.AltModifier:
-            parts.append("Alt")
+            parts.append("<alt>")
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            parts.append("Shift")
+            parts.append("<shift>")
         if modifiers & Qt.KeyboardModifier.MetaModifier:
-            parts.append("Cmd")
+            parts.append("<cmd>")
 
         special_map = {
-            Qt.Key.Key_Space: "Space",
-            Qt.Key.Key_Return: "Enter",
-            Qt.Key.Key_Enter: "Enter",
-            Qt.Key.Key_Tab: "Tab",
-            Qt.Key.Key_Backtab: "Tab",
-            Qt.Key.Key_Escape: "Esc",
-            Qt.Key.Key_Up: "Up",
-            Qt.Key.Key_Down: "Down",
-            Qt.Key.Key_Left: "Left",
-            Qt.Key.Key_Right: "Right",
-            Qt.Key.Key_Home: "Home",
-            Qt.Key.Key_End: "End",
-            Qt.Key.Key_PageUp: "PageUp",
-            Qt.Key.Key_PageDown: "PageDown",
-            Qt.Key.Key_Insert: "Insert",
-            Qt.Key.Key_Delete: "Delete",
-            Qt.Key.Key_Backspace: "Backspace",
-            Qt.Key.Key_CapsLock: "CapsLock",
-            Qt.Key.Key_NumLock: "NumLock",
-            Qt.Key.Key_ScrollLock: "ScrollLock",
-            Qt.Key.Key_F1: "F1",
-            Qt.Key.Key_F2: "F2",
-            Qt.Key.Key_F3: "F3",
-            Qt.Key.Key_F4: "F4",
-            Qt.Key.Key_F5: "F5",
-            Qt.Key.Key_F6: "F6",
-            Qt.Key.Key_F7: "F7",
-            Qt.Key.Key_F8: "F8",
-            Qt.Key.Key_F9: "F9",
-            Qt.Key.Key_F10: "F10",
-            Qt.Key.Key_F11: "F11",
-            Qt.Key.Key_F12: "F12",
-            Qt.Key.Key_Plus: "+",
-            Qt.Key.Key_Minus: "-",
-            Qt.Key.Key_Equal: "=",
-            Qt.Key.Key_Underscore: "_",
+            Qt.Key.Key_Space: "<space>",
+            Qt.Key.Key_Return: "<enter>",
+            Qt.Key.Key_Enter: "<enter>",
+            Qt.Key.Key_Tab: "<tab>",
+            Qt.Key.Key_Backtab: "<tab>",
+            Qt.Key.Key_Escape: "<esc>",
+            Qt.Key.Key_Up: "<up>",
+            Qt.Key.Key_Down: "<down>",
+            Qt.Key.Key_Left: "<left>",
+            Qt.Key.Key_Right: "<right>",
+            Qt.Key.Key_Home: "<home>",
+            Qt.Key.Key_End: "<end>",
+            Qt.Key.Key_PageUp: "<pageup>",
+            Qt.Key.Key_PageDown: "<pagedown>",
+            Qt.Key.Key_Insert: "<insert>",
+            Qt.Key.Key_Delete: "<delete>",
+            Qt.Key.Key_Backspace: "<backspace>",
+            Qt.Key.Key_CapsLock: "<capslock>",
+            Qt.Key.Key_NumLock: "<numlock>",
+            Qt.Key.Key_ScrollLock: "<scrolllock>",
+            Qt.Key.Key_F1: "<f1>",
+            Qt.Key.Key_F2: "<f2>",
+            Qt.Key.Key_F3: "<f3>",
+            Qt.Key.Key_F4: "<f4>",
+            Qt.Key.Key_F5: "<f5>",
+            Qt.Key.Key_F6: "<f6>",
+            Qt.Key.Key_F7: "<f7>",
+            Qt.Key.Key_F8: "<f8>",
+            Qt.Key.Key_F9: "<f9>",
+            Qt.Key.Key_F10: "<f10>",
+            Qt.Key.Key_F11: "<f11>",
+            Qt.Key.Key_F12: "<f12>",
         }
 
         key_name = None
@@ -106,13 +103,13 @@ class HotkeyEdit(QLineEdit):
             key_name = special_map.get(key)
             if not key_name:
                 if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
-                    key_name = chr(ord("A") + (key - Qt.Key.Key_A))
+                    key_name = chr(key).lower()
                 elif Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
-                    key_name = chr(ord("0") + (key - Qt.Key.Key_0))
+                    key_name = chr(key)
                 else:
                     text = event.text()
-                    if text and text not in ("+",):
-                        key_name = text.upper()
+                    if text:
+                        key_name = text.lower()
 
         if key_name:
             parts.append(key_name)
