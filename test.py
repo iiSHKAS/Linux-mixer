@@ -5,39 +5,57 @@ import time
 import json
 import os
 import re
+
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSlider, QPushButton, QLabel, QDialog, QComboBox, QLineEdit,
-    QFrame, QGraphicsDropShadowEffect, QScrollArea
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QMimeData, QSize, QTimer
-from PyQt6.QtGui import QDrag, QIcon, QColor
+
+from PyQt6.QtCore import (
+    QEvent,
+    QMimeData,
+    QObject,
+    QSize,
+    QTimer,
+    Qt,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QAction, QColor, QDrag, QIcon
 from pynput import keyboard
 
-CONFIG_FILE = os.path.expanduser("~/.mux_config.json")
-
-AUDIO_SINKS = ["Game", "Chat", "Media"]
-STREAM_MIX_NAME = "Stream_Mix"
-MIC_DISPLAY_NAME = "Mux Mic"
-MIC_INTERNAL_ID = "Mux_Mic"
-INTERNAL_MIC_PROCESSING = "Internal_Mic_Processing"
+CONFIG_FILE = os.path.expanduser("~/.sonar_config.json")
 
 THEME = {
     "Bg": "#0F1117",
     "Card": "#171A23",
     "CardAlt": "#1C2030",
     "Accent": "#5EE7FF",
-    "Game": "#8CFF6A",
+    "Game": "#5EE7FF",
     "Chat": "#B693FF",
     "Media": "#FF6B6B",
-    "Mic": "#FFD34D",
     "Text": "#E9EEF7",
     "Muted": "#FF6B6B",
     "Stroke": "#2A3040"
 }
 
+
 class AudioDataSignaler(QObject):
     update_apps = pyqtSignal(dict)
+
 
 class HotkeyEdit(QLineEdit):
     hotkeyChanged = pyqtSignal(str)
@@ -127,6 +145,7 @@ class HotkeyEdit(QLineEdit):
                 self.hotkeyChanged.emit(text_value)
             self.clearFocus()
 
+
 class SpacedComboBox(QComboBox):
     def showPopup(self):
         super().showPopup()
@@ -134,6 +153,7 @@ class SpacedComboBox(QComboBox):
         rect = popup.geometry()
         # Move popup down by 4 pixels to create a gap
         popup.move(rect.x(), rect.y() + 4)
+
 
 class DraggableAppLabel(QFrame):
     def __init__(self, name, app_id, icon_name, parent_app):
@@ -188,45 +208,18 @@ class DraggableAppLabel(QFrame):
             drag.exec(Qt.DropAction.MoveAction)
             self.parent_app.is_dragging_app = False
 
-class ChannelState:
-    def __init__(self, name):
-        self.name = name
-        self.volume = 0
-        self.stream_volume = 0
-        self.muted = False
-        self.stream_muted = False
-        self.apps = []
-
-def _clear_layout(layout):
-    while layout.count():
-        item = layout.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
-        if item.layout():
-            _clear_layout(item.layout())
 
 class AudioChannel(QFrame):
-    def __init__(self, name, vol_cb, stream_vol_cb, mute_cb, stream_mute_cb, hk_cb, move_app_cb, parent_app, streamer_mode, slider_height, streamer_slider_height):
+    def __init__(self, name, vol_cb, mute_cb, hk_cb, move_app_cb, parent_app):
         super().__init__()
         self.name = name
         self.parent_app = parent_app
         self.move_app_cb = move_app_cb
-        self.volume_cb = vol_cb
-        self.stream_volume_cb = stream_vol_cb
-        self.mute_cb = mute_cb
-        self.stream_mute_cb = stream_mute_cb
-        self.hk_cb = hk_cb
         self.color = THEME.get(name, "#FFFFFF")
-        self.streamer_mode = streamer_mode
-        self.slider_height = slider_height
-        self.streamer_slider_height = streamer_slider_height
 
-        self.user_slider = None
-        self.stream_slider = None
-        self.user_mute_btn = None
-        self.stream_mute_btn = None
-
+        self.setFixedWidth(270)
         self.setAcceptDrops(True)
+
         self.setStyleSheet(f"""
             QFrame#ChannelCard {{
                 background: {THEME['Card']};
@@ -244,61 +237,113 @@ class AudioChannel(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 20, 18, 18)
-        layout.setSpacing(12)
+        layout.setSpacing(16)
 
-        header = QFrame()
-        header.setStyleSheet("background: #1C2030; border-radius: 12px;")
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(8, 6, 8, 6)
         name_lbl = QLabel(name.upper())
-        name_lbl.setStyleSheet(f"color: {self.color}; font-weight: 900; font-size: 18px; letter-spacing: 1px; border: none; background: transparent;")
-        header_layout.addStretch()
-        header_layout.addWidget(name_lbl)
-        header_layout.addStretch()
+        name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_lbl.setStyleSheet(f"color: {self.color}; font-weight: 900; font-size: 16px; letter-spacing: 1px; border: none; background: transparent;")
+        layout.addWidget(name_lbl)
+
+        slider_wrap = QFrame()
+        slider_wrap.setStyleSheet(f"background: {THEME['CardAlt']}; border: none; border-radius: 18px;")
+        slider_layout = QVBoxLayout(slider_wrap)
+        slider_layout.setContentsMargins(18, 16, 18, 16)
+        slider_layout.setSpacing(0)
+
+        self.slider = QSlider(Qt.Orientation.Vertical)
+        self.slider.setRange(0, 100)
+        self.slider.setMinimumHeight(300)
+        self.slider.setFixedWidth(90)
+        self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.slider.setStyleSheet(f"""
+            QSlider::groove:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #272B3A, stop:1 #171A24);
+                width: 14px;
+                border-radius: 7px;
+                border: 1px solid rgba(255,255,255,0.08);
+            }}
+            QSlider::add-page:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {self.color}, stop:1 rgba(255,255,255,0.2));
+                width: 14px;
+                border-radius: 7px;
+            }}
+            QSlider::sub-page:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1E2230, stop:1 #141724);
+                border-radius: 7px;
+            }}
+            QSlider::handle:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #D3D7E4);
+                height: 30px;
+                width: 30px;
+                margin: 0 -8px;
+                border-radius: 15px;
+                border: 2px solid rgba(0,0,0,0.25);
+            }}
+            QSlider::handle:vertical:hover {{
+                background: {self.color};
+                border: 2px solid rgba(255,255,255,0.9);
+            }}
+        """)
+        self.slider.valueChanged.connect(lambda v: vol_cb(self.name, v))
+        slider_layout.addWidget(self.slider, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(slider_wrap, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        ctrl_layout = QHBoxLayout()
+        ctrl_layout.setSpacing(16)
+        ctrl_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        BTN_SIZE = 44
+        ICON_SIZE = 22
+        RADIUS = BTN_SIZE // 2
 
         gear_btn = QPushButton()
         gear_btn.setIcon(QIcon.fromTheme("preferences-system"))
-        gear_btn.setIconSize(QSize(22, 22))
-        gear_btn.setFixedSize(44, 44)
+        gear_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        gear_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
         gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         gear_btn.clicked.connect(lambda: hk_cb(self.name))
         gear_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {THEME['CardAlt']};
                 border: 2px solid rgba(255,255,255,0.12);
-                border-radius: 22px;
+                border-radius: {RADIUS}px;
             }}
             QPushButton:hover {{
                 background: #262B3B;
                 border: 2px solid {THEME['Accent']};
             }}
         """)
-        header_layout.addWidget(gear_btn)
-        layout.addWidget(header)
+        ctrl_layout.addWidget(gear_btn)
 
-        self.slider_wrap = QFrame()
-        self.slider_wrap.setStyleSheet(f"background: {THEME['CardAlt']}; border: none; border-radius: 18px;")
-        self.slider_layout = QHBoxLayout(self.slider_wrap)
-        self.slider_layout.setContentsMargins(18, 14, 18, 14)
-        self.slider_layout.setSpacing(12)
-        self._rebuild_sliders()
-        layout.addWidget(self.slider_wrap)
+        self.mute_btn = QPushButton()
+        self.mute_btn_style = f"""
+            QPushButton {{
+                background: {THEME['CardAlt']};
+                border: 2px solid {self.color};
+                border-radius: {RADIUS}px;
+            }}
+            QPushButton:hover {{
+                background: #262B3B;
+                border: 2px solid {self.color};
+            }}
+        """
 
-        self.btn_wrap = QFrame()
-        self.btn_wrap.setStyleSheet("background: #1C2030; border-radius: 12px;")
-        self.btn_layout = QHBoxLayout(self.btn_wrap)
-        self.btn_layout.setContentsMargins(8, 6, 8, 6)
-        self.btn_layout.setSpacing(12)
-        self.btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._rebuild_buttons()
-        layout.addWidget(self.btn_wrap)
+        self.mute_btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        self.mute_btn.setFixedSize(BTN_SIZE, BTN_SIZE)
+        self.mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mute_btn.clicked.connect(lambda: mute_cb(self.name))
+        self.update_mute_icon(False)
+        self.mute_btn.setStyleSheet(self.mute_btn_style)
+        ctrl_layout.addWidget(self.mute_btn)
+
+        layout.addLayout(ctrl_layout)
 
         apps_container = QFrame()
         apps_container.setStyleSheet("background: rgba(255,255,255,0.04); border-radius: 10px; border: none;")
         self.app_layout = QVBoxLayout(apps_container)
         self.app_layout.setContentsMargins(6, 6, 6, 6)
         self.app_layout.setSpacing(6)
-        self.app_layout.addStretch()
+        self.app_layout.addStretch()  # Ensure items start from top
 
         apps_scroll = QScrollArea()
         apps_scroll.setWidgetResizable(True)
@@ -331,99 +376,18 @@ class AudioChannel(QFrame):
         """)
         apps_scroll.setWidget(apps_container)
         layout.addWidget(apps_scroll)
+        # Remove bottom stretch to let scroll area expand
+        # layout.addStretch()
 
-    def _slider_stylesheet(self, color):
-        return f"""
-            QSlider::groove:vertical {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #272B3A, stop:1 #171A24);
-                width: 14px;
-                border-radius: 7px;
-                border: 1px solid rgba(255,255,255,0.08);
-            }}
-            QSlider::add-page:vertical {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {color}, stop:1 rgba(255,255,255,0.2));
-                width: 14px;
-                border-radius: 7px;
-            }}
-            QSlider::sub-page:vertical {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1E2230, stop:1 #141724);
-                border-radius: 7px;
-            }}
-            QSlider::handle:vertical {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #D3D7E4);
-                height: 30px;
-                width: 30px;
-                margin: 0 -8px;
-                border-radius: 15px;
-                border: 2px solid rgba(0,0,0,0.25);
-            }}
-            QSlider::handle:vertical:hover {{
-                background: {color};
-                border: 2px solid rgba(255,255,255,0.9);
-            }}
-        """
-
-    def _build_slider(self, color, height, on_change):
-        slider = QSlider(Qt.Orientation.Vertical)
-        slider.setRange(0, 100)
-        slider.setMinimumHeight(height)
-        slider.setFixedWidth(90)
-        slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        slider.setStyleSheet(self._slider_stylesheet(color))
-        slider.valueChanged.connect(on_change)
-        return slider
-
-    def _rebuild_sliders(self):
-        _clear_layout(self.slider_layout)
-        self.user_slider = None
-        self.stream_slider = None
-
-        if self.streamer_mode:
-            user_col = QVBoxLayout()
-            user_label = QLabel("USER")
-            user_label.setStyleSheet(f"color: {THEME['Text']}; font-size: 11px; font-weight: 700; border: none; background: transparent;")
-            user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            user_col.addWidget(user_label)
-            self.user_slider = self._build_slider(self.color, self.streamer_slider_height, lambda v: self.volume_cb(self.name, v))
-            user_col.addWidget(self.user_slider, alignment=Qt.AlignmentFlag.AlignCenter)
-
-            stream_col = QVBoxLayout()
-            stream_label = QLabel("STREAM")
-            stream_label.setStyleSheet(f"color: {THEME['Text']}; font-size: 11px; font-weight: 700; border: none; background: transparent;")
-            stream_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            stream_col.addWidget(stream_label)
-            self.stream_slider = self._build_slider(THEME['Accent'], self.streamer_slider_height, lambda v: self.stream_volume_cb(self.name, v))
-            stream_col.addWidget(self.stream_slider, alignment=Qt.AlignmentFlag.AlignCenter)
-
-            self.slider_layout.addLayout(user_col)
-            self.slider_layout.addLayout(stream_col)
-        else:
-            col = QVBoxLayout()
-            self.user_slider = self._build_slider(self.color, self.slider_height, lambda v: self.volume_cb(self.name, v))
-            col.addWidget(self.user_slider, alignment=Qt.AlignmentFlag.AlignCenter)
-            self.slider_layout.addLayout(col)
-
-    def _icon_for_mute(self, muted):
-        if self.name == 'Mic':
-            if muted:
-                icon = QIcon.fromTheme("audio-input-microphone-muted")
-                if icon.isNull():
-                    icon = QIcon.fromTheme("microphone-sensitivity-muted")
-            else:
-                icon = QIcon.fromTheme("audio-input-microphone")
-                if icon.isNull():
-                    icon = QIcon.fromTheme("microphone-sensitivity-high")
-        else:
-            icon = QIcon.fromTheme("audio-volume-muted" if muted else "audio-volume-high")
-        return icon
-
-    def _apply_mute_style(self, btn, muted, border_color):
-        if muted:
-            btn.setStyleSheet(f"""
+    def update_mute_icon(self, is_muted):
+        RADIUS = 22
+        if is_muted:
+            self.mute_btn.setIcon(QIcon.fromTheme("audio-volume-muted"))
+            self.mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: {THEME['Muted']};
                     border: 2px solid rgba(255,255,255,0.75);
-                    border-radius: 22px;
+                    border-radius: {RADIUS}px;
                 }}
                 QPushButton:hover {{
                     background: {THEME['Muted']};
@@ -431,59 +395,8 @@ class AudioChannel(QFrame):
                 }}
             """)
         else:
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {THEME['CardAlt']};
-                    border: 2px solid {border_color};
-                    border-radius: 22px;
-                }}
-                QPushButton:hover {{
-                    background: #262B3B;
-                    border: 2px solid {border_color};
-                }}
-            """)
-
-    def _build_mute_button(self, on_click):
-        btn = QPushButton()
-        btn.setIconSize(QSize(22, 22))
-        btn.setFixedSize(44, 44)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(on_click)
-        return btn
-
-    def _rebuild_buttons(self):
-        _clear_layout(self.btn_layout)
-        self.user_mute_btn = self._build_mute_button(lambda: self.mute_cb(self.name))
-        self.btn_layout.addWidget(self.user_mute_btn)
-        if self.streamer_mode:
-            self.stream_mute_btn = self._build_mute_button(lambda: self.stream_mute_cb(self.name))
-            self.btn_layout.addWidget(self.stream_mute_btn)
-        else:
-            self.stream_mute_btn = None
-
-    def set_streamer_mode(self, enabled):
-        if self.streamer_mode == enabled:
-            return
-        self.streamer_mode = enabled
-        self._rebuild_sliders()
-        self._rebuild_buttons()
-
-    def update_state(self, volume, stream_volume, muted, stream_muted):
-        if self.user_slider and not self.user_slider.isSliderDown():
-            self.user_slider.blockSignals(True)
-            self.user_slider.setValue(volume)
-            self.user_slider.blockSignals(False)
-        if self.stream_slider and not self.stream_slider.isSliderDown():
-            self.stream_slider.blockSignals(True)
-            self.stream_slider.setValue(stream_volume)
-            self.stream_slider.blockSignals(False)
-
-        if self.user_mute_btn:
-            self.user_mute_btn.setIcon(self._icon_for_mute(muted))
-            self._apply_mute_style(self.user_mute_btn, muted, self.color)
-        if self.stream_mute_btn:
-            self.stream_mute_btn.setIcon(self._icon_for_mute(stream_muted))
-            self._apply_mute_style(self.stream_mute_btn, stream_muted, THEME['Accent'])
+            self.mute_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
+            self.mute_btn.setStyleSheet(self.mute_btn_style)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
@@ -539,11 +452,12 @@ class AudioChannel(QFrame):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.app_layout.insertWidget(0, lbl)
 
+
 class FixedDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.Dialog)
-        
+
     def showEvent(self, event):
         super().showEvent(event)
         if self.parent():
@@ -561,41 +475,46 @@ class FixedDialog(QDialog):
                 self.move(geo.topLeft())
         super().moveEvent(event)
 
-class MuxHome(QMainWindow):
+
+class SonarProRedesign(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MUX")
-        self.setFixedSize(1285, 735)
+        self.setWindowTitle("SONAR LINUX ULTIMATE")
+        self.resize(980, 880)
         self.setStyleSheet(f"background-color: {THEME['Bg']}; font-family: 'Segoe UI', Sans-Serif;")
 
         self.is_dragging_app = False
         self.sinks = {"Game": "Game", "Chat": "Chat", "Media": "Media"}
-        self.channels = {name: ChannelState(name) for name in ["Game", "Chat", "Media", "Mic"]}
-        self.hotkeys_config = {}
-        self.active_inputs = {}
-        self.streamer_mode = False
-        self.selected_output = None
-        self.selected_input = None
 
-        self.hotkey_listener = None
-        self.hotkey_reload_event = threading.Event()
+        # هنا يتم تحميل الإعدادات (بما في ذلك المخرج الصوتي المحفوظ)
+        self.hotkeys_config = self.load_config()
+        self.widgets = {}
 
         self.signaler = AudioDataSignaler()
         self.signaler.update_apps.connect(self.dispatch_app_updates)
 
-        self.hotkeys_config = self.load_config()
         self.setup_ui()
         self.init_audio_engine()
-        self.startup_cleanup()
-        self.initial_setup()
 
-        self.sync_timer = QTimer(self)
-        self.sync_timer.timeout.connect(self.sync_once)
-        self.sync_timer.start(1000)
-        self.sync_once()
-
+        # تشغيل حلقات المزامنة والاختصارات
+        threading.Thread(target=self.sync_loop, daemon=True).start()
         threading.Thread(target=self.start_hotkeys, daemon=True).start()
-        self.register_hotkeys()
+
+        # ---------------------------------------------------------
+        # (الجديد) تطبيق إعداد المخرج الصوتي المحفوظ عند بدء التشغيل
+        # ---------------------------------------------------------
+        saved_output = self.hotkeys_config.get("selected_output")
+        if saved_output:
+            # نستخدم Thread لكي لا يتجمد البرنامج أثناء تنفيذ أوامر الصوت
+            threading.Thread(target=lambda: self.apply_full_route(saved_output), daemon=True).start()
+
+    def changeEvent(self, event):
+        # (الجديد) تحويل التصغير إلى إخفاء في التراي
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                # نستخدم Timer بسيط لضمان الإخفاء السلس
+                QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
 
     def run_cmd(self, cmd):
         try:
@@ -604,250 +523,103 @@ class MuxHome(QMainWindow):
             return ""
 
     def load_config(self):
-        defaults = {s: {"up": "", "down": "", "mute": "", "stream_up": "", "stream_down": "", "stream_mute": ""} for s in self.channels}
-        hotkeys = defaults
-        selected_output = None
-        selected_input = None
-        streamer_mode = False
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f:
-                    data = json.load(f)
-                if "hotkeys" in data:
-                    raw = data.get("hotkeys", {})
-                    hotkeys = {k: {kk: str(vv) for kk, vv in v.items()} for k, v in raw.items()}
-                    selected_output = data.get("selected_output")
-                    selected_input = data.get("selected_input")
-                    streamer_mode = data.get("streamer_mode") is True
-                else:
-                    hotkeys = {k: {kk: str(vv) for kk, vv in v.items()} for k, v in data.items()}
+                    return json.load(f)
             except:
-                hotkeys = defaults
-
-        for ch in defaults:
-            if ch not in hotkeys:
-                hotkeys[ch] = defaults[ch]
-            else:
-                for key in defaults[ch]:
-                    hotkeys[ch].setdefault(key, "")
-
-        self.selected_output = selected_output
-        self.selected_input = selected_input
-        self.streamer_mode = streamer_mode
-        return hotkeys
-
-    def save_config(self):
-        data = {
-            "hotkeys": self.hotkeys_config,
-            "selected_output": self.selected_output,
-            "selected_input": self.selected_input,
-            "streamer_mode": self.streamer_mode
-        }
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(data, f)
+                pass
+        return {s: {"up": "", "down": "", "mute": ""} for s in self.sinks}
 
     def init_audio_engine(self):
         existing = self.run_cmd("pactl list short sinks")
         for name in self.sinks.values():
-            if f"{name}\t" not in existing:
-                self.create_device(name, name, is_source=False)
-
-        existing_sources = self.run_cmd("pactl list short sources")
-        if MIC_INTERNAL_ID not in existing_sources:
-            self.create_device(MIC_INTERNAL_ID, MIC_DISPLAY_NAME, is_source=True)
-
-    def create_device(self, name, desc, is_source):
-        props = f"device.description='{desc}' node.nick='{desc}' media.name='{desc}' device.product.name='{desc}'"
-        if is_source:
-            self.run_cmd(f"pactl load-module module-null-sink sink_name={INTERNAL_MIC_PROCESSING} sink_properties=\"device.description='INTERNAL'\"")
-            time.sleep(0.1)
-            self.run_cmd(f"pactl load-module module-remap-source master={INTERNAL_MIC_PROCESSING}.monitor source_name={name} source_properties=\"{props} device.icon_name='audio-input-microphone'\"")
-        else:
-            self.run_cmd(f"pactl load-module module-null-sink sink_name={name} sink_properties=\"{props}\"")
-            self.run_cmd(f"pactl set-sink-volume {name} 100%")
-            self.run_cmd(f"pactl set-sink-mute {name} 0")
-
-    def startup_cleanup(self):
-        self.remove_links()
-        mods = self.run_cmd("pactl list short modules")
-        for line in mods.split('\n'):
-            if f"sink_name={STREAM_MIX_NAME}" in line:
-                mod_id = line.split('\t')[0].strip()
-                if mod_id:
-                    self.run_cmd(f"pactl unload-module {mod_id}")
-
-    def initial_setup(self):
-        phy_out = self.selected_output
-        if phy_out:
-            self.run_cmd(f"pactl set-sink-mute {phy_out} 1")
-        self.rebuild_routing()
-        self.set_system_defaults()
-        self.refresh_input_ids()
-        if phy_out:
-            time.sleep(0.3)
-            self.run_cmd(f"pactl set-sink-mute {phy_out} 0")
-
-    def handle_mode_toggle(self):
-        self.save_config()
-        phy_out = self.selected_output
-        if phy_out:
-            self.run_cmd(f"pactl set-sink-mute {phy_out} 1")
-        self.rebuild_routing()
-        self.set_system_defaults()
-        self.refresh_input_ids()
-        if phy_out:
-            time.sleep(0.3)
-            self.run_cmd(f"pactl set-sink-mute {phy_out} 0")
-
-    def set_system_defaults(self):
-        self.run_cmd("pactl set-default-sink Game")
-        self.run_cmd(f"pactl set-default-source {MIC_INTERNAL_ID}")
-
-    def remove_links(self):
-        output = self.run_cmd("pactl list sink-inputs")
-        for block in output.split("Sink Input #"):
-            if not block.strip():
-                continue
-            if 'media.name = "Link_' not in block:
-                continue
-            owner_match = re.search(r"Owner Module: (\d+)", block)
-            if owner_match:
-                mod_id = owner_match.group(1)
-                if mod_id:
-                    self.run_cmd(f"pactl unload-module {mod_id}")
-
-    def rebuild_routing(self):
-        phy_out = self.selected_output
-        phy_mic = self.selected_input
-        self.remove_links()
-        if not phy_out:
-            return
-
-        if self.streamer_mode:
-            mods = self.run_cmd("pactl list short modules")
-            if f"sink_name={STREAM_MIX_NAME}" not in mods:
-                self.create_device(STREAM_MIX_NAME, "Stream Mix", is_source=False)
-        else:
-            mods = self.run_cmd("pactl list short modules")
-            for line in mods.split('\n'):
-                if f"sink_name={STREAM_MIX_NAME}" in line:
-                    mod_id = line.split('\t')[0].strip()
-                    if mod_id:
-                        self.run_cmd(f"pactl unload-module {mod_id}")
-
-        for ch in self.sinks:
-            self.run_cmd(f"pactl load-module module-loopback source={ch}.monitor sink={phy_out} latency_msec=40 adjust_time=0 sink_input_properties=media.name=Link_User_{ch}")
-            if self.streamer_mode:
-                self.run_cmd(f"pactl load-module module-loopback source={ch}.monitor sink={STREAM_MIX_NAME} latency_msec=60 adjust_time=0 sink_input_properties=media.name=Link_Stream_{ch}")
-
-        if phy_mic:
-            self.run_cmd(f"pactl load-module module-loopback source={phy_mic} sink={INTERNAL_MIC_PROCESSING} latency_msec=40 adjust_time=0 sink_input_properties=media.name=Link_Mic_Chat")
-            if self.streamer_mode:
-                self.run_cmd(f"pactl load-module module-loopback source={phy_mic} sink={STREAM_MIX_NAME} latency_msec=40 adjust_time=0 sink_input_properties=media.name=Link_Mic_Stream")
+            if name not in existing:
+                self.run_cmd(f"pactl load-module module-null-sink sink_name={name} sink_properties=device.description={name}_Audio")
 
     def setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(7, 7, 7, 7)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(36, 32, 36, 32)
+        main_layout.setSpacing(20)
 
-        top_bar = QFrame()
-        top_bar.setFixedHeight(52)
-        top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.addStretch()
+        header = QFrame()
+        header.setStyleSheet("background: transparent; border: none;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.streamer_btn = QPushButton("STREAMER MODE")
-        self.streamer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.streamer_btn.clicked.connect(self.toggle_streamer_mode)
-        top_layout.addWidget(self.streamer_btn)
+        title_wrap = QVBoxLayout()
+        title = QLabel("SONAR")
+        title.setStyleSheet("color: white; font-size: 34px; font-weight: 900; border: none; letter-spacing: 2px;")
+        subtitle = QLabel("AUDIO MIXER")
+        subtitle.setStyleSheet(f"color: {THEME['Accent']}; font-size: 14px; font-weight: 700; border: none; margin-top: -4px;")
+        title_wrap.addWidget(title)
+        title_wrap.addWidget(subtitle)
+        header_layout.addLayout(title_wrap)
+        header_layout.addStretch()
 
         setup_btn = QPushButton("INITIAL SETUP")
-        setup_btn.setIcon(QIcon.fromTheme("preferences-system"))
+        setup_btn.setIcon(QIcon.fromTheme("utilities-terminal"))
         setup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        setup_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {THEME['Accent']}, stop:1 #88F5FF);
+                color: #0B0C10;
+                font-weight: 800;
+                padding: 10px 20px;
+                border-radius: 10px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background: #FFFFFF;
+            }}
+        """)
         setup_btn.clicked.connect(self.open_setup_dialog)
-        top_layout.addWidget(setup_btn)
-
-        main_layout.addWidget(top_bar)
+        header_layout.addWidget(setup_btn)
+        main_layout.addWidget(header)
 
         mixer_row = QHBoxLayout()
-        mixer_row.setSpacing(20)
-
-        self.widgets = {}
-        slider_height = 280
-        streamer_slider_height = 220
-        for name in self.channels.keys():
-            w = AudioChannel(
-                name,
-                self.set_user_volume,
-                self.set_stream_volume,
-                self.toggle_user_mute,
-                self.toggle_stream_mute,
-                self.open_hk_dialog,
-                self.move_app_to_sink,
-                self,
-                self.streamer_mode,
-                slider_height,
-                streamer_slider_height
-            )
+        mixer_row.setSpacing(24)
+        for name in self.sinks.keys():
+            w = AudioChannel(name, self.set_vol, self.do_mute, self.open_hk_dialog, self.move_app_to_sink, self)
             self.widgets[name] = w
             mixer_row.addWidget(w)
-
         main_layout.addLayout(mixer_row)
-        self.update_button_styles()
 
-    def update_button_styles(self):
-        if self.streamer_mode:
-            self.streamer_btn.setStyleSheet(f"background: {THEME['Accent']}; color: #0B0C10; font-weight: 800; padding: 10px 18px; border-radius: 12px; border: none; font-size: 12px;")
-        else:
-            self.streamer_btn.setStyleSheet(f"background: {THEME['CardAlt']}; color: {THEME['Text']}; font-weight: 800; padding: 10px 18px; border-radius: 12px; border: none; font-size: 12px;")
-        for btn in self.findChildren(QPushButton):
-            if btn is self.streamer_btn:
-                continue
+        # ---------------------------------------------------------
+        # (الجديد) إعدادات System Tray
+        # ---------------------------------------------------------
+        self.tray_icon = QSystemTrayIcon(self)
+        # محاولة استخدام أيقونة النظام، إذا لم توجد نستخدم أيقونة بديلة
+        icon = QIcon.fromTheme("audio-card")
+        if icon.isNull():
+            icon = QIcon.fromTheme("multimedia-volume-control")
+        self.tray_icon.setIcon(icon)
 
-        for btn in [b for b in self.findChildren(QPushButton) if b.text() == "INITIAL SETUP"]:
-            btn.setStyleSheet(f"background: {THEME['CardAlt']}; color: {THEME['Text']}; font-weight: 800; padding: 10px 18px; border-radius: 12px; border: none; font-size: 12px;")
+        # إنشاء القائمة عند الضغط كليك يمين
+        tray_menu = QMenu()
+        show_action = QAction("Show", self)
+        show_action.triggered.connect(self.showNormal)
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(QApplication.instance().quit)
 
-    def toggle_streamer_mode(self):
-        self.streamer_mode = not self.streamer_mode
-        for w in self.widgets.values():
-            w.set_streamer_mode(self.streamer_mode)
-        self.update_button_styles()
-        self.handle_mode_toggle()
-        self.register_hotkeys()
+        tray_menu.addAction(show_action)
+        tray_menu.addAction(quit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+
+        # عند الضغط كليك يسار على الأيقونة يفتح البرنامج
+        self.tray_icon.activated.connect(lambda reason: self.showNormal() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
 
     def move_app_to_sink(self, app_id, target_name):
-        if target_name in self.sinks:
-            self.run_cmd(f"pactl move-sink-input {app_id} {target_name}")
+        self.run_cmd(f"pactl move-sink-input {app_id} {target_name}")
 
-    def set_user_volume(self, name, val):
-        input_id = self.get_input_id(name, self.user_input_key(name))
-        if input_id:
-            self.set_input_volume(input_id, int(val))
+    def set_vol(self, name, val):
+        self.run_cmd(f"pactl set-sink-volume {name} {int(val)}%")
 
-    def set_stream_volume(self, name, val):
-        if not self.streamer_mode:
-            return
-        input_id = self.get_input_id(name, "stream_input")
-        if input_id:
-            self.set_input_volume(input_id, int(val))
-
-    def toggle_user_mute(self, name):
-        input_id = self.get_input_id(name, self.user_input_key(name))
-        if input_id:
-            new_state = not self.channels[name].muted
-            self.channels[name].muted = new_state
-            self.set_input_mute(input_id, new_state)
-
-    def toggle_stream_mute(self, name):
-        if not self.streamer_mode:
-            return
-        input_id = self.get_input_id(name, "stream_input")
-        if input_id:
-            new_state = not self.channels[name].stream_muted
-            self.channels[name].stream_muted = new_state
-            self.set_input_mute(input_id, new_state)
+    def do_mute(self, name):
+        self.run_cmd(f"pactl set-sink-mute {name} toggle")
 
     def dispatch_app_updates(self, data):
         if not self.is_dragging_app:
@@ -855,204 +627,99 @@ class MuxHome(QMainWindow):
                 if name in self.widgets:
                     self.widgets[name].update_apps_list(apps)
 
-    def fetch_app_mapping(self):
-        mapping = {"Game": [], "Chat": [], "Media": [], "Mic": []}
-        sink_list = self.run_cmd("pactl list short sinks")
-        sink_id_map = {}
-        for line in sink_list.split('\n'):
-            parts = line.split('\t')
-            if len(parts) > 1:
-                for s_name in self.sinks:
-                    if s_name in parts[1]:
-                        sink_id_map[parts[0]] = s_name
+    def sync_loop(self):
+        while True:
+            for name in self.sinks:
+                vol_raw = self.run_cmd(f"pactl get-sink-volume {name}")
+                mute_raw = self.run_cmd(f"pactl get-sink-mute {name}")
+                if "%" in vol_raw:
+                    try:
+                        v = int(vol_raw.split('%')[0].split('/')[-1].strip())
+                        is_muted = "yes" in mute_raw.lower()
 
-        inputs_raw = self.run_cmd("pactl list sink-inputs")
-        blocks = inputs_raw.split("Sink Input #")
-        for block in blocks:
-            if not block.strip():
-                continue
-            if 'media.name = "Link_' in block:
-                continue
-            input_id_match = re.search(r"^(\d+)", block.strip())
-            sink_match = re.search(r"Sink: (\d+)", block)
-            if input_id_match and sink_match:
-                i_id = input_id_match.group(1)
-                s_id = sink_match.group(1)
-                if s_id in sink_id_map:
-                    target_track = sink_id_map[s_id]
-                    app_name = "Unknown"
-                    icon_name = "audio-card"
-                    name_match = re.search(r'application.name = "(.*?)"', block)
-                    if name_match:
-                        app_name = name_match.group(1)
-                    icon_match = re.search(r'application.icon_name = "(.*?)"', block)
-                    if icon_match:
-                        icon_name = icon_match.group(1)
-                    elif "brave" in app_name.lower():
-                        icon_name = "brave-browser"
-                    elif "discord" in app_name.lower():
-                        icon_name = "discord"
-                    elif "firefox" in app_name.lower():
-                        icon_name = "firefox"
-                    elif "chrome" in app_name.lower():
-                        icon_name = "google-chrome"
-                    elif "spotify" in app_name.lower():
-                        icon_name = "spotify-client"
+                        w = self.widgets[name]
+                        if not w.slider.isSliderDown():
+                            w.slider.blockSignals(True)
+                            w.slider.setValue(v)
+                            w.slider.blockSignals(False)
 
-                    mapping[target_track].append((app_name, i_id, icon_name))
-        return mapping
+                        w.update_mute_icon(is_muted)
+                    except:
+                        pass
 
-    def user_input_key(self, name):
-        return "chat_input" if name == "Mic" else "user_input"
-
-    def refresh_input_ids(self):
-        active = {name: {} for name in self.channels}
-        output = self.run_cmd("pactl list sink-inputs")
-        for block in output.split("Sink Input #"):
-            if not block.strip():
-                continue
-            id_match = re.search(r"^(\d+)", block.strip())
-            name_match = re.search(r'media.name = "(.*?)"', block)
-            if not id_match or not name_match:
-                continue
-            input_id = id_match.group(1)
-            link_name = name_match.group(1)
-            if not link_name.startswith("Link_"):
-                continue
-            parts = link_name.split("_")
-            if len(parts) < 3:
-                continue
-            category = parts[1]
-            target = parts[2]
-            if category == "Mic":
-                if target == "Chat":
-                    active["Mic"]["chat_input"] = input_id
-                elif target == "Stream":
-                    active["Mic"]["stream_input"] = input_id
-            else:
-                if target not in active:
-                    continue
-                if category == "User":
-                    active[target]["user_input"] = input_id
-                elif category == "Stream":
-                    active[target]["stream_input"] = input_id
-        self.active_inputs = active
-
-    def get_input_id(self, name, key):
-        input_id = self.active_inputs.get(name, {}).get(key)
-        if input_id is None:
-            self.refresh_input_ids()
-            input_id = self.active_inputs.get(name, {}).get(key)
-        return input_id
-
-    def get_input_volume(self, input_id):
-        raw = self.run_cmd(f"pactl get-sink-input-volume {input_id}")
-        match = re.search(r"(\d+)%", raw)
-        if not match:
-            return None
-        return int(match.group(1))
-
-    def get_input_mute(self, input_id):
-        raw = self.run_cmd(f"pactl get-sink-input-mute {input_id}")
-        if not raw:
-            return None
-        return "yes" in raw.lower()
-
-    def set_input_volume(self, input_id, value):
-        v = max(0, min(100, int(value)))
-        self.run_cmd(f"pactl set-sink-input-volume {input_id} {v}%")
-        self.run_cmd(f"pactl set-sink-input-mute {input_id} 0")
-
-    def set_input_mute(self, input_id, muted):
-        self.run_cmd(f"pactl set-sink-input-mute {input_id} {1 if muted else 0}")
-
-    def sync_once(self):
-        self.refresh_input_ids()
-        for name, ch in self.channels.items():
-            user_key = self.user_input_key(name)
-            user_id = self.active_inputs.get(name, {}).get(user_key)
-            stream_id = self.active_inputs.get(name, {}).get("stream_input")
-
-            if user_id:
-                v = self.get_input_volume(user_id)
-                if v is not None:
-                    ch.volume = v
-                m = self.get_input_mute(user_id)
-                if m is not None:
-                    ch.muted = m
-
-            if stream_id:
-                sv = self.get_input_volume(stream_id)
-                if sv is not None:
-                    ch.stream_volume = sv
-                sm = self.get_input_mute(stream_id)
-                if sm is not None:
-                    ch.stream_muted = sm
-
-        if not self.is_dragging_app:
-            app_mapping = self.fetch_app_mapping()
-            for name, ch in self.channels.items():
-                ch.apps = app_mapping.get(name, [])
-
-        for name, widget in self.widgets.items():
-            ch = self.channels[name]
-            widget.update_state(ch.volume, ch.stream_volume, ch.muted, ch.stream_muted)
             if not self.is_dragging_app:
-                widget.update_apps_list(ch.apps)
+                app_mapping = {"Game": [], "Chat": [], "Media": []}
+                sink_id_map = {}
+                sink_list = self.run_cmd("pactl list short sinks")
+                for line in sink_list.split('\n'):
+                    parts = line.split('\t')
+                    if len(parts) > 1:
+                        for s_name in self.sinks:
+                            if s_name in parts[1]:
+                                sink_id_map[parts[0]] = s_name
+
+                inputs_raw = self.run_cmd("pactl list sink-inputs")
+                blocks = inputs_raw.split("Sink Input #")
+                for block in blocks:
+                    if not block.strip():
+                        continue
+                    input_id_match = re.search(r"^(\d+)", block)
+                    sink_match = re.search(r"Sink: (\d+)", block)
+                    if input_id_match and sink_match:
+                        i_id = input_id_match.group(1)
+                        s_id = sink_match.group(1)
+                        if s_id in sink_id_map:
+                            target_track = sink_id_map[s_id]
+                            app_name = "Unknown"
+                            icon_name = "audio-card"
+                            name_match = re.search(r'application.name = "(.*?)"', block)
+                            if name_match:
+                                app_name = name_match.group(1)
+                            icon_match = re.search(r'application.icon_name = "(.*?)"', block)
+                            if icon_match:
+                                icon_name = icon_match.group(1)
+                            elif "brave" in app_name.lower():
+                                icon_name = "brave-browser"
+                            elif "discord" in app_name.lower():
+                                icon_name = "discord"
+                            elif "firefox" in app_name.lower():
+                                icon_name = "firefox"
+                            elif "chrome" in app_name.lower():
+                                icon_name = "google-chrome"
+                            elif "spotify" in app_name.lower():
+                                icon_name = "spotify-client"
+
+                            app_mapping[target_track].append((app_name, i_id, icon_name))
+                self.signaler.update_apps.emit(app_mapping)
+            time.sleep(1)
 
     def start_hotkeys(self):
+        def on_press(sink, action):
+            if action == "up":
+                self.run_cmd(f"pactl set-sink-volume {sink} +5%")
+            elif action == "down":
+                self.run_cmd(f"pactl set-sink-volume {sink} -5%")
+            elif action == "mute":
+                self.do_mute(sink)
         while True:
-            self.hotkey_reload_event.wait()
-            self.hotkey_reload_event.clear()
-            if self.hotkey_listener:
-                try:
-                    self.hotkey_listener.stop()
-                except:
-                    pass
-
-            def on_press(ch, action):
-                if action == "up":
-                    next_v = max(0, min(100, self.channels[ch].volume + 5))
-                    self.channels[ch].volume = next_v
-                    self.set_user_volume(ch, next_v)
-                elif action == "down":
-                    next_v = max(0, min(100, self.channels[ch].volume - 5))
-                    self.channels[ch].volume = next_v
-                    self.set_user_volume(ch, next_v)
-                elif action == "mute":
-                    self.toggle_user_mute(ch)
-                elif action == "stream_up":
-                    next_v = max(0, min(100, self.channels[ch].stream_volume + 5))
-                    self.channels[ch].stream_volume = next_v
-                    self.set_stream_volume(ch, next_v)
-                elif action == "stream_down":
-                    next_v = max(0, min(100, self.channels[ch].stream_volume - 5))
-                    self.channels[ch].stream_volume = next_v
-                    self.set_stream_volume(ch, next_v)
-                elif action == "stream_mute":
-                    self.toggle_stream_mute(ch)
-
-            hotkeys = {}
-            for ch, acts in self.hotkeys_config.items():
-                if ch not in self.channels:
-                    continue
-                for action, key in acts.items():
-                    if action.startswith("stream_") and not self.streamer_mode:
-                        continue
-                    if key:
-                        hotkeys[key] = lambda s=ch, a=action: on_press(s, a)
-
+            hotkeys = {
+                key: (lambda s=sn, a=act: on_press(s, a))
+                for sn, acts in self.hotkeys_config.items()
+                if sn in self.sinks
+                for act, key in acts.items() if key
+            }
             if hotkeys:
                 try:
-                    self.hotkey_listener = keyboard.GlobalHotKeys(hotkeys)
-                    self.hotkey_listener.start()
+                    with keyboard.GlobalHotKeys(hotkeys) as h:
+                        h.join()
                 except:
-                    self.hotkey_listener = None
+                    pass
+            time.sleep(1)
 
     def open_hk_dialog(self, ch):
         d = FixedDialog(self)
         d.setWindowTitle("Shortcuts")
-        d.setFixedSize(540, 420)
+        d.setFixedSize(440, 300)
         d.setStyleSheet(f"background: {THEME['Card']}; color: white; border-radius: 12px;")
 
         l = QVBoxLayout(d)
@@ -1064,13 +731,12 @@ class MuxHome(QMainWindow):
         title.setStyleSheet("font-size: 13px; font-weight: 700; color: #C8D0E0; margin: 0 0 8px 0;")
         l.addWidget(title)
 
-        user_actions = [
+        actions = [
             ("mute", "Mute", "audio-volume-muted"),
             ("down", "Volume Down", "go-down"),
             ("up", "Volume Up", "go-up")
         ]
-
-        for act, label, icon_name in user_actions:
+        for act, label, icon_name in actions:
             row_wrap = QFrame()
             row_wrap.setStyleSheet(f"background: {THEME['CardAlt']}; border-radius: 10px;")
             row = QHBoxLayout(row_wrap)
@@ -1085,7 +751,7 @@ class MuxHome(QMainWindow):
 
             text_lbl = QLabel(label)
             text_lbl.setStyleSheet("color: #C8D0E0; font-size: 12px; font-weight: 700;")
-            text_lbl.setFixedWidth(150)
+            text_lbl.setFixedWidth(110)
             row.addWidget(text_lbl)
 
             e = HotkeyEdit()
@@ -1108,125 +774,69 @@ class MuxHome(QMainWindow):
             row.addWidget(e)
             l.addWidget(row_wrap)
             e.hotkeyChanged.connect(lambda value, act=act: self.save_hk_value(ch, act, value))
-
-        if self.streamer_mode:
-            spacer_top = QFrame()
-            spacer_top.setFixedHeight(4)
-            l.addWidget(spacer_top)
-            divider = QFrame()
-            divider.setFixedHeight(1)
-            divider.setStyleSheet("background: #2A3040;")
-            l.addWidget(divider)
-            spacer_bottom = QFrame()
-            spacer_bottom.setFixedHeight(4)
-            l.addWidget(spacer_bottom)
-
-            stream_actions = [
-                ("stream_mute", "Stream Mute", "audio-volume-muted"),
-                ("stream_down", "Stream Volume Down", "go-down"),
-                ("stream_up", "Stream Volume Up", "go-up")
-            ]
-            for act, label, icon_name in stream_actions:
-                row_wrap = QFrame()
-                row_wrap.setStyleSheet(f"background: {THEME['CardAlt']}; border-radius: 10px;")
-                row = QHBoxLayout(row_wrap)
-                row.setContentsMargins(10, 8, 10, 8)
-                row.setSpacing(10)
-
-                icon_lbl = QLabel()
-                icon_pix = QIcon.fromTheme(icon_name).pixmap(QSize(24, 24))
-                icon_lbl.setPixmap(icon_pix)
-                icon_lbl.setStyleSheet("background: transparent;")
-                row.addWidget(icon_lbl)
-
-                text_lbl = QLabel(label)
-                text_lbl.setStyleSheet("color: #C8D0E0; font-size: 12px; font-weight: 700;")
-                text_lbl.setFixedWidth(150)
-                row.addWidget(text_lbl)
-
-                e = HotkeyEdit()
-                e.setText(self.hotkeys_config[ch][act])
-                e.setPlaceholderText("Press keys...")
-                e.setStyleSheet(f"""
-                    QLineEdit {{
-                        background: #11141D;
-                        padding: 8px 10px;
-                        border: 1px solid transparent;
-                        border-radius: 8px;
-                        color: white;
-                        min-width: 190px;
-                    }}
-                    QLineEdit:focus {{
-                        background: #141A24;
-                        border: 2px solid {THEME['Accent']};
-                    }}
-                """)
-                row.addWidget(e)
-                l.addWidget(row_wrap)
-                e.hotkeyChanged.connect(lambda value, act=act: self.save_hk_value(ch, act, value))
         d.setFocus()
         d.exec()
 
+    def save_hk(self, ch, data):
+        self.hotkeys_config[ch] = data
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.hotkeys_config, f)
+
     def save_hk_value(self, ch, act, value):
-        self.hotkeys_config.setdefault(ch, {"up": "", "down": "", "mute": "", "stream_up": "", "stream_down": "", "stream_mute": ""})
         self.hotkeys_config[ch][act] = value
-        self.save_config()
-        self.register_hotkeys()
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.hotkeys_config, f)
 
     def open_setup_dialog(self):
-        hw_outputs = {}
+        hw_info = {}
         output = self.run_cmd("pactl list sinks")
         curr = ""
+        # استخراج الأجهزة المتاحة
         for line in output.split('\n'):
             line = line.strip()
             if line.startswith("Name:"):
                 curr = line.split(":", 1)[1].strip()
             elif line.startswith("Description:") and curr:
                 desc = line.split(":", 1)[1].strip()
-                is_virtual = curr in self.sinks.values() or STREAM_MIX_NAME in curr or INTERNAL_MIC_PROCESSING in curr or "Internal" in curr
-                if not is_virtual:
-                    hw_outputs[desc] = curr
-
-        hw_inputs = {}
-        sources = self.run_cmd("pactl list sources")
-        curr_src = ""
-        for line in sources.split('\n'):
-            line = line.strip()
-            if line.startswith("Name:"):
-                curr_src = line.split(":", 1)[1].strip()
-            elif line.startswith("Description:") and curr_src:
-                desc = line.split(":", 1)[1].strip()
-                is_virtual = MIC_INTERNAL_ID in curr_src or ".monitor" in curr_src
-                if not is_virtual:
-                    hw_inputs[desc] = curr_src
+                if curr not in self.sinks.values():
+                    hw_info[desc] = curr
 
         d = FixedDialog(self)
         d.setWindowTitle("Audio Routing Setup")
-        d.setFixedSize(420, 320)
+        d.setFixedSize(400, 240)
         d.setStyleSheet(f"background: #0C0F16; color: white; border-radius: 18px;")
 
         l = QVBoxLayout(d)
         l.setContentsMargins(16, 16, 16, 16)
-        l.setSpacing(8)
+        l.setSpacing(5)
 
         desc = QLabel("Select your primary output device")
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setStyleSheet("font-size: 13px; font-weight: 600; color: #E9EEF7; margin-top: 8px; margin-bottom: 8px;")
+        desc.setStyleSheet("font-size: 13px; font-weight: 600; color: #E9EEF7; margin-top: 20px; margin-bottom: 10px;")
         l.addWidget(desc)
 
         out_box = QFrame()
+        out_box.setStyleSheet("background: transparent;")
         out_layout = QVBoxLayout(out_box)
         out_layout.setContentsMargins(0, 0, 0, 0)
         out_layout.setSpacing(0)
 
-        out_combo = SpacedComboBox()
-        out_combo.addItems(list(hw_outputs.keys()))
-        if self.selected_output:
-            for i, (k, v) in enumerate(hw_outputs.items()):
-                if v == self.selected_output:
-                    out_combo.setCurrentIndex(i)
+        c = SpacedComboBox()
+        c.addItems(list(hw_info.keys()))
+
+        # --- التعديل هنا: تحديد العنصر المحفوظ سابقاً ---
+        saved_sink = self.hotkeys_config.get("selected_output")
+        if saved_sink:
+            # البحث عن الاسم الظاهر الذي يقابل المعرف المحفوظ
+            for index, (desc_text, sink_id) in enumerate(hw_info.items()):
+                if sink_id == saved_sink:
+                    c.setCurrentIndex(index)
                     break
-        out_combo.setStyleSheet("""
+        else:
+            c.setCurrentIndex(0)
+        # -----------------------------------------------
+
+        c.setStyleSheet("""
             QComboBox {
                 background: #171a23;
                 padding: 10px 14px;
@@ -1255,51 +865,49 @@ class MuxHome(QMainWindow):
                 outline: none;
             }
         """)
-        out_layout.addWidget(out_combo)
+        out_layout.addWidget(c)
         l.addWidget(out_box)
-
-        in_desc = QLabel("Select your microphone input")
-        in_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        in_desc.setStyleSheet("font-size: 13px; font-weight: 600; color: #E9EEF7; margin-top: 12px; margin-bottom: 8px;")
-        l.addWidget(in_desc)
-
-        in_box = QFrame()
-        in_layout = QVBoxLayout(in_box)
-        in_layout.setContentsMargins(0, 0, 0, 0)
-        in_layout.setSpacing(0)
-
-        in_combo = SpacedComboBox()
-        in_combo.addItems(list(hw_inputs.keys()))
-        if self.selected_input:
-            for i, (k, v) in enumerate(hw_inputs.items()):
-                if v == self.selected_input:
-                    in_combo.setCurrentIndex(i)
-                    break
-        in_combo.setStyleSheet(out_combo.styleSheet())
-        in_layout.addWidget(in_combo)
-        l.addWidget(in_box)
 
         l.addStretch()
 
         b = QPushButton("APPLY")
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setStyleSheet("background: #5EE7FF; color: #0B0C10; font-weight: bold; padding: 12px; border-radius: 12px; font-size: 12px;")
-        b.clicked.connect(lambda: self.apply_setup(hw_outputs.get(out_combo.currentText(), ""), hw_inputs.get(in_combo.currentText(), ""), d))
+        b.clicked.connect(lambda: [self.apply_full_route(hw_info.get(c.currentText(), "")), d.close()])
         l.addWidget(b)
         d.exec()
 
-    def apply_setup(self, output_id, input_id, dialog):
-        self.selected_output = output_id or None
-        self.selected_input = input_id or None
-        self.save_config()
-        self.initial_setup()
-        dialog.close()
+    def apply_full_route(self, sink_id):
+        # 1. تنفيذ الأوامر الصوتية
+        for v in self.sinks.values():
+            self.run_cmd(f"pw-link {v}:monitor_FL {sink_id}:playback_FL")
+            self.run_cmd(f"pw-link {v}:monitor_FR {sink_id}:playback_FR")
 
-    def register_hotkeys(self):
-        self.hotkey_reload_event.set()
+        self.run_cmd("pactl set-default-sink Game")
+        print(f"Routing applied to {sink_id}")
+
+        # 2. حفظ الاختيار في ملف الإعدادات
+        if sink_id:
+            self.hotkeys_config["selected_output"] = sink_id
+            try:
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(self.hotkeys_config, f)
+            except Exception as e:
+                print(f"Error saving config: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    win = MuxHome()
-    win.show()
+
+    # منع إغلاق التطبيق عند إغلاق آخر نافذة (لأننا نعتمد على التراي)
+    app.setQuitOnLastWindowClosed(False)
+
+    win = SonarProRedesign()
+
+    # (الجديد) فحص إذا كان هناك أمر --minimized
+    if "--minimized" in sys.argv:
+        win.hide()  # يبدأ مخفياً في التراي
+    else:
+        win.show()  # يبدأ ظاهراً بشكل طبيعي
+
     sys.exit(app.exec())
+
